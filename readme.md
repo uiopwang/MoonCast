@@ -31,7 +31,7 @@ python download_pretrain.py
 The audio prompts used in this project are sourced from publicly available podcast segments and are intended solely for demonstration purposes. Redistribution of these audio files, whether in their original form or as generated audio, is strictly prohibited. If you have any concerns or questions regarding the use of these audio files, please contact us at juzeqian@mail.ustc.edu.cn
 
 ```sh
-python inference.py
+CUDA_VISIBLE_DEVICIES=0 python inference.py
 ```
 
 ## Disclaimer  
