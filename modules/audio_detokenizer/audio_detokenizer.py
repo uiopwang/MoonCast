@@ -198,7 +198,7 @@ def get_audio_detokenizer():
     return detokenizer
 
 
-def detokenize(detokenizer, tokens, ref_wav, ref_tokens):
+def detokenize(detokenizer, tokens, ref_wav, ref_tokens, streaming=False):
     with torch.no_grad():
         detokenizer.clear_states()
         detokenizer.prefill(ref_wav, ref_tokens, chunk_size=150)
@@ -207,16 +207,23 @@ def detokenize(detokenizer, tokens, ref_wav, ref_tokens):
         first_chunk_size = 100
         first_chunk_tokens = tokens[:, :first_chunk_size]
         gen_speech = detokenizer.detokenize_streaming(first_chunk_tokens, is_final=tokens.size(1) <= first_chunk_size)
-        cache_speech_collection.append(gen_speech)
+        if streaming:
+            yield gen_speech
+        else:
+            cache_speech_collection.append(gen_speech)
         res_tokens = tokens[:, first_chunk_size:]
         for i in range(0, res_tokens.size(1), chunk_size):
             chunk_tokens = res_tokens[:, i:i+chunk_size]
             gen_speech = detokenizer.detokenize_streaming(chunk_tokens, is_final=(i+chunk_size >= res_tokens.size(1)))
-            cache_speech_collection.append(gen_speech)
-        gen_speech_all = torch.cat(cache_speech_collection, dim=-1)
-    return gen_speech_all
+            if streaming:
+                yield gen_speech
+            else:
+                cache_speech_collection.append(gen_speech)
+        if not streaming:
+            gen_speech_all = torch.cat(cache_speech_collection, dim=-1)
+            return gen_speech_all
 
-def detokenize_noref(detokenizer, tokens):
+def detokenize_noref(detokenizer, tokens, streaming=False):
     with torch.no_grad():
         detokenizer.clear_states()
         cache_speech_collection = []
@@ -224,11 +231,19 @@ def detokenize_noref(detokenizer, tokens):
         first_chunk_size = 100
         first_chunk_tokens = tokens[:, :first_chunk_size]
         gen_speech = detokenizer.detokenize_streaming(first_chunk_tokens, is_final=tokens.size(1) <= first_chunk_size)
-        cache_speech_collection.append(gen_speech)
+        if streaming:
+            yield gen_speech
+        else:
+            cache_speech_collection.append(gen_speech)
         res_tokens = tokens[:, first_chunk_size:]
         for i in range(0, res_tokens.size(1), chunk_size):
             chunk_tokens = res_tokens[:, i:i+chunk_size]
             gen_speech = detokenizer.detokenize_streaming(chunk_tokens, is_final=(i+chunk_size >= res_tokens.size(1)))
-            cache_speech_collection.append(gen_speech)
-        gen_speech_all = torch.cat(cache_speech_collection, dim=-1)
-    return gen_speech_all
+            if streaming:
+                yield gen_speech
+            else:
+                cache_speech_collection.append(gen_speech)
+        if not streaming:
+            gen_speech_all = torch.cat(cache_speech_collection, dim=-1)
+            return gen_speech_all
+

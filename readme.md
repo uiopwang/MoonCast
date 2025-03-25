@@ -19,6 +19,7 @@ conda activate mooncast
 pip install -r requirements.txt 
 pip install flash-attn --no-build-isolation
 pip install huggingface_hub
+pip install gradio==5.22.0
 ```
 
 - Download the pretrained weights.

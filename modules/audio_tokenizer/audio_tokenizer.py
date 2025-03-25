@@ -73,4 +73,3 @@ def get_audio_tokenizer():
     audio_tokenizer = AudioTokenizer(**config)
     return audio_tokenizer
 
-get_audio_tokenizer()
