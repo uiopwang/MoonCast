@@ -5,6 +5,8 @@ Demo page: [demo](https://mooncastdemo.github.io)
 
 Paper: [paper](https://arxiv.org/abs/2503.14345)
 
+2025/03/26 UPDATE: We also host a [HuggingFace space](https://huggingface.co/spaces/jzq11111/mooncast) for testing audio generation.
+
 We open-source this system to advance the field of human-like speech synthesis. Our goal is to create more natural and expressive synthetic voices that bridge the gap between machines and humans. We hope this project will inspire researchers and developers to explore new possibilities in voice technology. We warmly welcome contributions from anyone interested in this project. Whether through code, documentation, feedback, or sharing your insights, every input helps make this project better.
 
 ### Abstract
