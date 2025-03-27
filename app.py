@@ -6,7 +6,7 @@ from inference import Model
 import base64
 
 model = Model()
-model.generate_config.max_new_tokens = 50 * 50 # no more than 20s per turn
+model.generate_config.max_new_tokens = 50 * 50 # no more than 50s per turn
 
 
 def process_json_and_generate_audio(prompt_audio_role0_file, prompt_text_role0, prompt_audio_role1_file, prompt_text_role1, json_dialogue_input_str):
