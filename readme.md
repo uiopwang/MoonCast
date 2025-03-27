@@ -37,5 +37,11 @@ The audio prompts used in this project are sourced from publicly available podca
 CUDA_VISIBLE_DEVICIES=0 python inference.py
 ```
 
+2025/03/26 UPDATE: We add a Gradio-based user interface for audio generation. Deploy it locally using:
+
+```sh
+CUDA_VISIBLE_DEVICIES=0 python app.py
+```
+
 ## Disclaimer  
 This project is intended for **research purposes only**. We strongly encourage users to **use this project and its generated audio responsibly**. **We are not responsible for any misuse or abuse of this project**. By using this project, you agree to comply with all applicable laws and ethical guidelines.
