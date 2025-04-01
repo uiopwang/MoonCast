@@ -69,8 +69,11 @@ def process_json_and_generate_audio(prompt_audio_role0_file, prompt_text_role0, 
 title_en = "# PODCAST generator (supports English and Chinese)"
 title_zh = "# 播客生成 (支持英文和中文)"
 
-input_labels_en = ["Prompt Audio for Role 0", "Prompt Text for Role 0", "Prompt Audio for Role 1", "Prompt Text for Role 1", "Dialogue JSON Input"]
-input_labels_zh = ["角色 0 的 Prompt 音频", "角色 0 的 Prompt 文本", "角色 1 的 Prompt 音频", "角色 1 的 Prompt 文本", "对话 JSON 输入"]
+instruct_en = "## See [Github](https://github.com/jzq2000/MoonCast) for podcast script generation."
+instruct_zh = "## 播客剧本生成请参考 [Github](https://github.com/jzq2000/MoonCast)。"
+
+input_labels_en = ["Prompt Audio for Role 0", "Prompt Text for Role 0", "Prompt Audio for Role 1", "Prompt Text for Role 1", "Script JSON Input"]
+input_labels_zh = ["角色 0 的 Prompt 音频", "角色 0 的 Prompt 文本", "角色 1 的 Prompt 音频", "角色 1 的 Prompt 文本", "剧本 JSON 输入"]
 
 output_label_en = "Generated Audio Output (streaming)"
 output_label_zh = "生成的音频输出(流式)"
@@ -134,6 +137,7 @@ examples = [
 def update_ui_language(language):
     if language == "English":
         return  gr.update(value=title_en), \
+                gr.update(value=instruct_en), \
                 gr.update(label="UI Language"), \
                 gr.update(label=input_labels_en[0]), \
                 gr.update(label=input_labels_en[1]), \
@@ -146,6 +150,7 @@ def update_ui_language(language):
     
     elif language == "中文":
         return  gr.update(value=title_zh), \
+                gr.update(value=instruct_zh), \
                 gr.update(label="UI 语言"), \
                 gr.update(label=input_labels_zh[0]), \
                 gr.update(label=input_labels_zh[1]), \
@@ -170,6 +175,7 @@ css = """
 with gr.Blocks(css=css) as iface:
 
     title_output = gr.Markdown(value=title_zh, elem_classes="centered-title")
+    instruct_output = gr.Markdown(value=instruct_zh)
     language_choice = gr.Radio(["中文", "English"], value="中文", label="UI语言") 
 
     with gr.Row(): # Main row to create two columns
@@ -203,7 +209,7 @@ with gr.Blocks(css=css) as iface:
     language_choice.change(
         fn=update_ui_language,
         inputs=language_choice,
-        outputs=[title_output, language_choice, audio_input_role0, text_input_role0, audio_input_role1, text_input_role1, json_input, audio_output, submit_button, examples_component.dataset]
+        outputs=[title_output, instruct_output, language_choice, audio_input_role0, text_input_role0, audio_input_role1, text_input_role1, json_input, audio_output, submit_button, examples_component.dataset]
     )
 
 
