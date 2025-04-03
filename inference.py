@@ -3,7 +3,7 @@ import sys
 sys.path.append(".")
 from modules.tokenizer.tokenizer import get_tokenizer_and_extra_tokens
 from modules.audio_tokenizer.audio_tokenizer import get_audio_tokenizer
-from modules.audio_detokenizer.audio_detokenizer import get_audio_detokenizer, detokenize, detokenize_noref
+from modules.audio_detokenizer.audio_detokenizer import get_audio_detokenizer, detokenize, detokenize_noref, detokenize_streaming, detokenize_noref_streaming
 import torch
 import os
 from glob import glob
@@ -13,6 +13,7 @@ import torchaudio
 from transformers import AutoModelForCausalLM, GenerationConfig
 import librosa
 from tqdm import tqdm
+from pydub import AudioSegment
 
 class Model(object):
     def __init__(self):
@@ -75,12 +76,18 @@ class Model(object):
     def inference(self, js, streaming=False):
         js = self._process_text(js)
         if "role_mapping" not in js:
-            return self.infer_without_prompt(js, streaming)
+            if streaming:
+                return self.infer_without_prompt_streaming(js)
+            else:
+                return self.infer_without_prompt(js)
         else:
-            return self.infer_with_prompt(js, streaming)      
+            if streaming:
+                return self.infer_with_prompt_streaming(js)
+            else:
+                return self.infer_with_prompt(js)      
     
     @torch.inference_mode()
-    def infer_with_prompt(self, js, streaming=False):
+    def infer_with_prompt(self, js):
         user_role_0_ids = [self.user_msg_start] + self.user_ids + self.spk_0_ids  + [self.name_end]
         user_role_1_ids = [self.user_msg_start] + self.user_ids + self.spk_1_ids  + [self.name_end]
         assistant_role_0_ids = [self.assistant_msg_start] + self.assistant_ids + self.spk_0_ids + [self.name_end]
@@ -150,34 +157,159 @@ class Model(object):
             prompt = torch.cat([outputs, media_end], dim=-1)            
 
             torch_token = output_token - self.speech_token_offset
-            if streaming:
-                # gen_speech_fm = detokenize(self.audio_detokenizer, torch_token, cur_role_dict[role_id]["wav_24k"], cur_role_dict[role_id]["semantic_tokens"])
-                # yield detokenize(self.audio_detokenizer, torch_token, cur_role_dict[role_id]["wav_24k"], cur_role_dict[role_id]["semantic_tokens"])
-                for cur_chunk in detokenize(self.audio_detokenizer, torch_token, cur_role_dict[role_id]["wav_24k"], cur_role_dict[role_id]["semantic_tokens"], streaming=True):
-                    cur_chunk = cur_chunk.cpu()
-                    cur_chunk = cur_chunk / cur_chunk.abs().max()
-                    cur_buffer = io.BytesIO()
-                    torchaudio.save(cur_buffer, cur_chunk, sample_rate=24000, format="mp3")
-                    audio_bytes = cur_buffer.getvalue()
-                    audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-                    yield audio_b64
-            else:
-                gen_speech_fm = detokenize(self.audio_detokenizer, torch_token, cur_role_dict[role_id]["wav_24k"], cur_role_dict[role_id]["semantic_tokens"])
-                gen_speech_fm = gen_speech_fm.cpu()
-                gen_speech_fm = gen_speech_fm / gen_speech_fm.abs().max()
-                wav_list.append(gen_speech_fm)
+            gen_speech_fm = detokenize(self.audio_detokenizer, torch_token, cur_role_dict[role_id]["wav_24k"], cur_role_dict[role_id]["semantic_tokens"])
+            gen_speech_fm = gen_speech_fm.cpu()
+            gen_speech_fm = gen_speech_fm / gen_speech_fm.abs().max()
+            wav_list.append(gen_speech_fm)
             del torch_token
-        if not streaming:
-            concat_wav = torch.cat(wav_list, dim=-1).cpu()
-            # print(concat_wav.shape)
-            buffer = io.BytesIO()
-            torchaudio.save(buffer, concat_wav, sample_rate=24000, format="mp3")
-            audio_bytes = buffer.getvalue()
-            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-            return audio_b64
+        
+        concat_wav = torch.cat(wav_list, dim=-1).cpu()
+        # print(concat_wav.shape)
+        buffer = io.BytesIO()
+        torchaudio.save(buffer, concat_wav, sample_rate=24000, format="mp3")
+        audio_bytes = buffer.getvalue()
+        audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        return audio_b64
     
     @torch.inference_mode()
-    def infer_without_prompt(self, js, streaming=False):
+    def infer_with_prompt_streaming(self, js):
+        user_role_0_ids = [self.user_msg_start] + self.user_ids + self.spk_0_ids  + [self.name_end]
+        user_role_1_ids = [self.user_msg_start] + self.user_ids + self.spk_1_ids  + [self.name_end]
+        assistant_role_0_ids = [self.assistant_msg_start] + self.assistant_ids + self.spk_0_ids + [self.name_end]
+        assistant_role_1_ids = [self.assistant_msg_start] + self.assistant_ids + self.spk_1_ids + [self.name_end]
+
+        media_start = [self.media_begin] + self.audio_ids + [self.media_content]
+        media_end = [self.media_end] + [self.msg_end]
+
+        assistant_role_0_ids = torch.LongTensor(assistant_role_0_ids).unsqueeze(0).to(torch.cuda.current_device())
+        assistant_role_1_ids = torch.LongTensor(assistant_role_1_ids).unsqueeze(0).to(torch.cuda.current_device())
+        media_start = torch.LongTensor(media_start).unsqueeze(0).to(torch.cuda.current_device())
+        media_end = torch.LongTensor(media_end).unsqueeze(0).to(torch.cuda.current_device())
+        
+
+        prompt = []
+        cur_role_dict = dict()
+        for role, role_item in js["role_mapping"].items():
+            waveform_24k = librosa.load(role_item["ref_audio"], sr=24000)[0]
+            waveform_24k = torch.tensor(waveform_24k).unsqueeze(0).to(torch.cuda.current_device())
+
+            waveform_16k = librosa.load(role_item["ref_audio"], sr=16000)[0]
+            waveform_16k = torch.tensor(waveform_16k).unsqueeze(0).to(torch.cuda.current_device())
+
+            semantic_tokens = self.audio_tokenizer.tokenize(waveform_16k)
+            semantic_tokens = semantic_tokens.to(torch.cuda.current_device())
+            prompt_ids = semantic_tokens + self.speech_token_offset
+
+            cur_role_dict[role] = {
+                "ref_bpe_ids": role_item["ref_bpe_ids"],
+                "wav_24k": waveform_24k,
+                "semantic_tokens": semantic_tokens,
+                "prompt_ids": prompt_ids
+            }
+        
+        prompt = prompt + user_role_0_ids + cur_role_dict["0"]["ref_bpe_ids"] + [self.msg_end]
+        prompt = prompt + user_role_1_ids + cur_role_dict["1"]["ref_bpe_ids"] + [self.msg_end]
+        
+        for seg_id, turn in enumerate(js["dialogue"]):
+            role_id = turn["role"]
+            cur_user_ids = user_role_0_ids if role_id == "0" else user_role_1_ids
+            cur_start_ids = cur_user_ids + turn["bpe_ids"] + [self.msg_end]
+            prompt = prompt + cur_start_ids
+        
+        prompt = torch.LongTensor(prompt).unsqueeze(0).to(torch.cuda.current_device())
+
+        prompt = torch.cat([prompt, assistant_role_0_ids, media_start, cur_role_dict["0"]["prompt_ids"], media_end], dim=-1)
+        prompt = torch.cat([prompt, assistant_role_1_ids, media_start, cur_role_dict["1"]["prompt_ids"], media_end], dim=-1)
+
+        
+        generation_config = self.generate_config
+        # you can modify sampling strategy here
+
+        wav_list = []
+        for seg_id, turn in tqdm(enumerate(js["dialogue"])):
+            role_id = turn["role"]
+            cur_assistant_ids = assistant_role_0_ids if role_id == "0" else assistant_role_1_ids                
+            prompt = torch.cat([prompt, cur_assistant_ids, media_start], dim=-1)
+            len_prompt = prompt.shape[1]
+            generation_config.min_length = len_prompt + 2
+            # print(generation_config)
+            # todo: add streaming support for generate function
+            outputs = self.model.generate(prompt,
+                                          generation_config=generation_config)
+            if outputs[0, -1] == self.media_end:
+                outputs = outputs[:, :-1]
+            output_token = outputs[:, len_prompt:]
+            prompt = torch.cat([outputs, media_end], dim=-1)            
+
+            torch_token = output_token - self.speech_token_offset
+            for cur_chunk in detokenize_streaming(self.audio_detokenizer, torch_token, cur_role_dict[role_id]["wav_24k"], cur_role_dict[role_id]["semantic_tokens"]):
+                cur_chunk = cur_chunk.cpu()
+                cur_chunk = cur_chunk / cur_chunk.abs().max()
+                cur_buffer = io.BytesIO()
+                torchaudio.save(cur_buffer, cur_chunk, sample_rate=24000, format="mp3")
+                audio_bytes = cur_buffer.getvalue()
+                audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                yield audio_b64
+               
+    @torch.inference_mode()
+    def infer_without_prompt(self, js):
+        user_role_0_ids = [self.user_msg_start] + self.user_ids + self.spk_0_ids  + [self.name_end]
+        user_role_1_ids = [self.user_msg_start] + self.user_ids + self.spk_1_ids  + [self.name_end]
+        assistant_role_0_ids = [self.assistant_msg_start] + self.assistant_ids + self.spk_0_ids + [self.name_end]
+        assistant_role_1_ids = [self.assistant_msg_start] + self.assistant_ids + self.spk_1_ids + [self.name_end]
+
+        media_start = [self.media_begin] + self.audio_ids + [self.media_content]
+        media_end = [self.media_end] + [self.msg_end]
+
+        assistant_role_0_ids = torch.LongTensor(assistant_role_0_ids).unsqueeze(0).to(torch.cuda.current_device())
+        assistant_role_1_ids = torch.LongTensor(assistant_role_1_ids).unsqueeze(0).to(torch.cuda.current_device())
+        media_start = torch.LongTensor(media_start).unsqueeze(0).to(torch.cuda.current_device())
+        media_end = torch.LongTensor(media_end).unsqueeze(0).to(torch.cuda.current_device())
+        
+
+        prompt = []
+        for seg_id, turn in enumerate(js["dialogue"]):
+            role_id = turn["role"]
+            cur_user_ids = user_role_0_ids if role_id == "0" else user_role_1_ids
+            cur_start_ids = cur_user_ids + turn["bpe_ids"] + [self.msg_end]
+            prompt = prompt + cur_start_ids
+
+        prompt = torch.LongTensor(prompt).unsqueeze(0).to(torch.cuda.current_device())
+        generation_config = self.generate_config
+        # you can modify sampling strategy here
+
+        wav_list = []
+        for seg_id, turn in tqdm(enumerate(js["dialogue"])):
+            role_id = turn["role"]
+            cur_assistant_ids = assistant_role_0_ids if role_id == "0" else assistant_role_1_ids                
+            prompt = torch.cat([prompt, cur_assistant_ids, media_start], dim=-1)
+            len_prompt = prompt.shape[1]
+            generation_config.min_length = len_prompt + 2
+            # todo: add streaming support for generate function
+            outputs = self.model.generate(prompt,
+                                          generation_config=generation_config)
+            if outputs[0, -1] == self.media_end:
+                outputs = outputs[:, :-1]
+            output_token = outputs[:, len_prompt:]
+            prompt = torch.cat([outputs, media_end], dim=-1)
+
+            torch_token = output_token - self.speech_token_offset
+            gen_speech_fm = detokenize_noref(self.audio_detokenizer, torch_token)
+            gen_speech_fm = gen_speech_fm.cpu()
+            gen_speech_fm = gen_speech_fm / gen_speech_fm.abs().max()
+            wav_list.append(gen_speech_fm)
+            del torch_token
+
+        concat_wav = torch.cat(wav_list, dim=-1).cpu()
+        # print(concat_wav.shape)
+        buffer = io.BytesIO()
+        torchaudio.save(buffer, concat_wav, sample_rate=24000, format="mp3")
+        audio_bytes = buffer.getvalue()
+        audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        return audio_b64
+    
+    @torch.inference_mode()
+    def infer_without_prompt_streaming(self, js):
         user_role_0_ids = [self.user_msg_start] + self.user_ids + self.spk_0_ids  + [self.name_end]
         user_role_1_ids = [self.user_msg_start] + self.user_ids + self.spk_1_ids  + [self.name_end]
         assistant_role_0_ids = [self.assistant_msg_start] + self.assistant_ids + self.spk_0_ids + [self.name_end]
@@ -220,31 +352,15 @@ class Model(object):
             prompt = torch.cat([outputs, media_end], dim=-1)
 
             torch_token = output_token - self.speech_token_offset
-            if streaming:
-                for cur_chunk in detokenize_noref(self.audio_detokenizer, torch_token, streaming=True):
-                    cur_chunk = cur_chunk.cpu()
-                    cur_chunk = cur_chunk / cur_chunk.abs().max()
-                    cur_buffer = io.BytesIO()
-                    torchaudio.save(cur_buffer, cur_chunk, sample_rate=24000, format="mp3")
-                    audio_bytes = cur_buffer.getvalue()
-                    audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-                    yield audio_b64
-            else:
-                gen_speech_fm = detokenize_noref(self.audio_detokenizer, torch_token)
-                gen_speech_fm = gen_speech_fm.cpu()
-                gen_speech_fm = gen_speech_fm / gen_speech_fm.abs().max()
-                wav_list.append(gen_speech_fm)
-            del torch_token
-
-        if not streaming:
-            concat_wav = torch.cat(wav_list, dim=-1).cpu()
-            # print(concat_wav.shape)
-            buffer = io.BytesIO()
-            torchaudio.save(buffer, concat_wav, sample_rate=24000, format="mp3")
-            audio_bytes = buffer.getvalue()
-            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-            return audio_b64
-
+            for cur_chunk in detokenize_noref_streaming(self.audio_detokenizer, torch_token):
+                cur_chunk = cur_chunk.cpu()
+                cur_chunk = cur_chunk / cur_chunk.abs().max()
+                cur_buffer = io.BytesIO()
+                torchaudio.save(cur_buffer, cur_chunk, sample_rate=24000, format="mp3")
+                audio_bytes = cur_buffer.getvalue()
+                audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                yield audio_b64
+           
         
 if __name__ == "__main__":
     model = Model()
@@ -276,6 +392,18 @@ if __name__ == "__main__":
             }      
         ]
     }
+
+
+    audio_bytes_gen = model.inference(zh_test_json, streaming=True)
+    audio = AudioSegment.empty()
+    for cur_chunk in audio_bytes_gen:
+        cur_chunk = base64.b64decode(cur_chunk)
+        audio_chunk = AudioSegment.from_file(io.BytesIO(cur_chunk), format="mp3")
+        audio += audio_chunk
+    audio.export("tmp_generated_zh_stream.mp3", format="mp3")
+    print("zh stream done")
+    
+
     audio_bytes = model.inference(zh_test_json)
     file_to_save = open(f"tmp_generated_zh.mp3", "wb")
     file_to_save.write(base64.b64decode(audio_bytes))
