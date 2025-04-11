@@ -1,5 +1,11 @@
 # MoonCast: High-Quality Zero-Shot Podcast Generation
 
+<p align="center">
+    <picture>
+        <img src="./fig/logo.png" width="40%">
+    </picture>
+</p>
+
 ## Overview
 Demo page: [demo](https://mooncastdemo.github.io)
 
